@@ -34,9 +34,46 @@ app.listen(port, () => {
   "description": "WebContainer Express Example",
   "main": "index.js",
   "dependencies": {
-    "express": "^4.18.2"
+    "express": "^4.18.2",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0"
   }
-}`
+}`,
+'webpack.config.js': `
+const path = require('path');
+
+module.exports = {
+  entry: './src/index.js',
+  output: {
+    path: path.resolve(__dirname, 'dist'),
+    filename: 'bundle.js',
+  },
+  module: {
+    rules: [
+      {
+        test: /\\.(js|jsx|ts|tsx)$/,
+        exclude: /node_modules/,
+        use: {
+          loader: 'babel-loader',
+          options: {
+            presets: [
+              '@babel/preset-env',
+              '@babel/preset-react',
+              '@babel/preset-typescript'
+            ]
+          }
+        }
+      }
+    ]
+  },
+  resolve: {
+    extensions: ['.js', '.jsx', '.ts', '.tsx'],
+  }
+};`
   });
   
   const [selectedFile, setSelectedFile] = useState<string>('index.js');
@@ -48,7 +85,7 @@ app.listen(port, () => {
   const webcontainerRef = useRef<WebContainerInstance | null>(null);
   const serverProcessRef = useRef<ServerProcess | null>(null);
   
-  // Initialize WebContainer
+
   useEffect(() => {
     const bootWebContainer = async (): Promise<void> => {
       try {
@@ -70,7 +107,7 @@ app.listen(port, () => {
     };
   }, []);
   
-  // Helper to determine language for Monaco Editor
+
   const getLanguageFromFilename = (filename: string): string => {
     const extension = filename.split('.').pop()?.toLowerCase();
     switch (extension) {
@@ -86,7 +123,6 @@ app.listen(port, () => {
     }
   };
   
-  // Handle editor changes
   const handleEditorChange = (value: string | undefined): void => {
     if (value !== undefined) {
       setFiles(prev => ({
