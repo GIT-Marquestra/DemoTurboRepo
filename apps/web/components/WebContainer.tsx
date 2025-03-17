@@ -311,7 +311,7 @@ module.exports = {
         {/* Monaco Editor */}
         <div className="flex-1 relative min-h-0">
           <Editor
-            height="100%"
+            height="500px"
             defaultLanguage={getLanguageFromFilename(selectedFile)}
             language={getLanguageFromFilename(selectedFile)}
             value={files[selectedFile] || ''}

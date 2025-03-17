@@ -1,9 +1,13 @@
-import WebContainerIDE from "../components/WebContainer";
 
-export default function Home() {
+import { prisma } from "@repo/db/prisma"
+export default async function Home() {
+  const user = await prisma.user.findFirst()
   return (
     <div>
-      <WebContainerIDE/>
+      <div>
+        {user?.username}
+        {user?.email}
+      </div>
     </div>
   );
 }
