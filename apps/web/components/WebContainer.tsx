@@ -6,10 +6,16 @@ import Editor from "@monaco-editor/react";
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Play, Plus, XCircle } from 'lucide-react';
+import { Play, Plus, XCircle, Folder, FileText, ChevronUp } from 'lucide-react';
 
 // Define types for our state and props
 type FileContent = Record<string, string>;
+type FileStructure = {
+  name: string;
+  path: string;
+  type: 'file' | 'folder';
+  children?: FileStructure[];
+};
 type WebContainerInstance = any; // Using any as a fallback since we don't have the exact type
 type ServerProcess = any; // Using any as a fallback for the server process
 
@@ -34,10 +40,18 @@ app.listen(port, () => {
   "description": "WebContainer Express Example",
   "main": "index.js",
   "dependencies": {
-    "express": "^4.18.2",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
-  },
+  "express": "^4.18.2",
+  "react": "^18.2.0",
+  "react-dom": "^18.2.0",
+  "@babel/core": "^7.22.0",
+  "@babel/preset-env": "^7.22.0",
+  "@babel/preset-react": "^7.22.0",
+  "@babel/preset-typescript": "^7.22.0",
+  "babel-loader": "^9.1.2",
+  "webpack": "^5.85.0",
+  "webpack-cli": "^5.1.1",
+  "webpack-dev-server": "^4.15.0"
+}
   "devDependencies": {
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0"
@@ -78,13 +92,80 @@ module.exports = {
   
   const [selectedFile, setSelectedFile] = useState<string>('index.js');
   const [newFileName, setNewFileName] = useState<string>('');
+  const [newFolderName, setNewFolderName] = useState<string>('');
+  const [currentPath, setCurrentPath] = useState<string>('');
   const [entryPoint, setEntryPoint] = useState<string>('index.js');
   const [output, setOutput] = useState<string>('');
   const [isRunning, setIsRunning] = useState<boolean>(false);
+  const [showFolderInput, setShowFolderInput] = useState<boolean>(false);
+  const [fileStructure, setFileStructure] = useState<FileStructure[]>([]);
   
   const webcontainerRef = useRef<WebContainerInstance | null>(null);
   const serverProcessRef = useRef<ServerProcess | null>(null);
   
+  // Generate file structure from files object
+  useEffect(() => {
+    const generateFileStructure = () => {
+      const structure: FileStructure[] = [];
+      const dirs: Record<string, FileStructure> = {};
+      
+      // First pass: create all folders
+      Object.keys(files).forEach(path => {
+        const parts = path.split('/');
+        let currentPath = '';
+        
+        for (let i = 0; i < parts.length - 1; i++) {
+          const folderName = parts[i];
+          const previousPath = currentPath;
+
+          if(!folderName) return 
+
+          currentPath = currentPath ? `${currentPath}/${folderName}` : folderName;
+
+          
+          if (!dirs[currentPath]) {
+            const newFolder: FileStructure = {
+              name: folderName,
+              path: currentPath,
+              type: 'folder',
+              children: []
+            };
+            
+            dirs[currentPath] = newFolder;
+            
+            if (previousPath) {
+              dirs[previousPath]?.children?.push(newFolder);
+            } else {
+              structure.push(newFolder);
+            }
+          }
+        }
+      });
+      
+      // Second pass: add all files
+      Object.keys(files).forEach(path => {
+        const parts = path.split('/');
+        const fileName = parts.pop() || '';
+        const folderPath = parts.join('/');
+        
+        const fileItem: FileStructure = {
+          name: fileName,
+          path: path,
+          type: 'file'
+        };
+        
+        if (folderPath) {
+          dirs[folderPath]?.children?.push(fileItem);
+        } else {
+          structure.push(fileItem);
+        }
+      });
+      
+      setFileStructure(structure);
+    };
+    
+    generateFileStructure();
+  }, [files]);
 
   useEffect(() => {
     const bootWebContainer = async (): Promise<void> => {
@@ -107,7 +188,6 @@ module.exports = {
     };
   }, []);
   
-
   const getLanguageFromFilename = (filename: string): string => {
     const extension = filename.split('.').pop()?.toLowerCase();
     switch (extension) {
@@ -132,15 +212,47 @@ module.exports = {
     }
   };
   
-  const mountFiles = async (): Promise<void> => {
+  const mountFiles = async () => {
     if (!webcontainerRef.current) return;
     
-    const fileTree: Record<string, { file: { contents: string } }> = {};
+    // Create a nested structure that matches the file system
+    const fileTree: Record<string, any> = {};
     
+    console.log(files);
+    
+    // Process all files and organize them into a nested structure
     Object.entries(files).forEach(([path, content]) => {
-      fileTree[path] = { file: { contents: content } };
+      const normalizedPath = path.startsWith('/') ? path.substring(1) : path;
+      const parts = normalizedPath.split('/');
+      
+      // Handle file at root level
+      if (parts[0] && parts.length === 1) {
+        fileTree[parts[0]] = { file: { contents: content } };
+        return;
+      }
+      
+      // Handle nested files
+      let current = fileTree;
+      for (let i = 0; i < parts.length - 1; i++) {
+        const part = parts[i];
+        if(part){
+          if (!current[part]) {
+            current[part] = { directory: {} };
+          }
+          current = current[part].directory;
+        }
+      }
+      
+      // Add the file to its correct directory
+      const fileName = parts[parts.length - 1];
+      if(fileName){
+        current[fileName] = { file: { contents: content } };
+      }
     });
     
+    console.log(fileTree);
+    
+    // Mount files to WebContainer
     await webcontainerRef.current.mount(fileTree);
   };
   
@@ -212,39 +324,181 @@ module.exports = {
       defaultContent = '/* CSS file */\nbody {\n  margin: 0;\n  padding: 0;\n}';
     }
     
+    const newFilePath = currentPath ? `${currentPath}/${newFileName}` : newFileName;
+    
     setFiles(prev => ({
       ...prev,
-      [newFileName]: defaultContent
+      [newFilePath]: defaultContent
     }));
     
-    setSelectedFile(newFileName);
+    setSelectedFile(newFilePath);
     setNewFileName('');
   };
   
+  // Add new folder
+  const addNewFolder = (): void => {
+    if (!newFolderName) return;
+    
+    const newFolderPath = currentPath ? `${currentPath}/${newFolderName}` : newFolderName;
+    
+    // Create an empty file inside the folder to ensure it exists
+    // This is a common practice since empty folders are not tracked in some systems
+    const placeholderFile = `${newFolderPath}/.placeholder`;
+    
+    setFiles(prev => ({
+      ...prev,
+      [placeholderFile]: '// This file ensures the folder exists'
+    }));
+    
+    setNewFolderName('');
+    setShowFolderInput(false);
+    
+    // Navigate to the new folder
+    setCurrentPath(newFolderPath);
+  };
+  
+  // Navigate to a folder
+  const navigateToFolder = (folderPath: string): void => {
+    setCurrentPath(folderPath);
+  };
+  
+  // Navigate to parent folder
+  const navigateToParentFolder = (): void => {
+    if (!currentPath) return;
+    
+    const parts = currentPath.split('/');
+    parts.pop();
+    const parentPath = parts.join('/');
+    
+    setCurrentPath(parentPath);
+  };
+  
   // Handle key press for new file input
-  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>): void => {
+  const handleFileKeyPress = (e: React.KeyboardEvent<HTMLInputElement>): void => {
     if (e.key === 'Enter') {
       addNewFile();
     }
   };
+  
+  // Handle key press for new folder input
+  const handleFolderKeyPress = (e: React.KeyboardEvent<HTMLInputElement>): void => {
+    if (e.key === 'Enter') {
+      addNewFolder();
+    }
+  };
 
   // Remove a file
-  const removeFile = (filename: string): void => {
-    if (Object.keys(files).length <= 1) {
-      return; // Don't allow removing the last file
+  const removeFile = (filePath: string): void => {
+    // Don't allow removing the last file
+    const filteredFiles = Object.keys(files).filter(path => !path.includes('/.placeholder'));
+    if (filteredFiles.length <= 1) {
+      return;
     }
     
     const newFiles = { ...files };
-    delete newFiles[filename];
+    delete newFiles[filePath];
+    
+    // If this was the last file in a folder, we need to check if we should remove the folder
+    const parts = filePath.split('/');
+    parts.pop(); // Remove the filename
+    const folderPath = parts.join('/');
+    
+    if (folderPath) {
+      const folderHasOtherFiles = Object.keys(newFiles).some(path => 
+        path !== filePath && path.startsWith(`${folderPath}/`)
+      );
+      
+      if (!folderHasOtherFiles) {
+        // Remove any placeholder files for this folder
+        Object.keys(newFiles).forEach(path => {
+          if (path.startsWith(`${folderPath}/`) && path.endsWith('/.placeholder')) {
+            delete newFiles[path];
+          }
+        });
+      }
+    }
+    
     setFiles(newFiles);
     
     // If the deleted file was selected, select the first available file
-    if (newFiles && selectedFile === filename && Object.keys(newFiles).length > 0) {
-      const firstFile = Object.keys(newFiles)[0];
-      if (firstFile) {
-        setSelectedFile(firstFile);
+    if (selectedFile === filePath) {
+      const availableFiles = Object.keys(newFiles).filter(path => !path.includes('/.placeholder'));
+      if (availableFiles[0]) {
+        setSelectedFile(availableFiles[0]);
       }
     }
+  };
+  
+  // Get files for the current path
+  const getCurrentPathFiles = (): FileStructure[] => {
+    if (!currentPath) {
+      return fileStructure;
+    }
+    
+    // Find the current folder in the structure
+    const findFolder = (items: FileStructure[], path: string): FileStructure | null => {
+      for (const item of items) {
+        if (item.type === 'folder' && item.path === path) {
+          return item;
+        }
+        if (item.type === 'folder' && item.path === path) {
+          return item;
+        }
+        if (item.type === 'folder' && item.children) {
+          const found = findFolder(item.children, path);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+    
+    const currentFolder = findFolder(fileStructure, currentPath);
+    return currentFolder?.children || [];
+  };
+  
+  // Render breadcrumb navigation
+  const renderBreadcrumbs = () => {
+    if (!currentPath) return null;
+    
+    const parts = currentPath.split('/');
+    const breadcrumbs = [];
+    
+    // Add root
+    breadcrumbs.push(
+      <span 
+        key="root" 
+        className="text-sm cursor-pointer hover:text-primary"
+        onClick={() => setCurrentPath('')}
+      >
+        root
+      </span>
+    );
+    
+    // Build path progressively
+    let path = '';
+    parts.forEach((part, index) => {
+      path = path ? `${path}/${part}` : part;
+      
+      breadcrumbs.push(
+        <span key={`separator-${index}`} className="mx-1 text-muted-foreground">/</span>
+      );
+      
+      breadcrumbs.push(
+        <span 
+          key={path} 
+          className="text-sm cursor-pointer hover:text-primary"
+          onClick={() => setCurrentPath(path)}
+        >
+          {part}
+        </span>
+      );
+    });
+    
+    return (
+      <div className="flex items-center p-2 bg-muted/30 text-muted-foreground border-b border-border">
+        {breadcrumbs}
+      </div>
+    );
   };
   
   return (
@@ -259,6 +513,7 @@ module.exports = {
         {/* File tabs and controls */}
         <div className="flex items-center justify-between px-2 py-1 bg-background border-b border-border">
           <div className="flex items-center overflow-x-auto max-w-full">
+
             {Object.keys(files).map(filename => (
               <div 
                 key={filename}
@@ -292,7 +547,6 @@ module.exports = {
                 type="text"
                 value={newFileName}
                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewFileName(e.target.value)}
-                onKeyPress={handleKeyPress}
                 placeholder="new-file.js"
                 className="h-8 w-32 text-sm rounded-l-md focus:ring-primary"
               />
@@ -309,27 +563,146 @@ module.exports = {
           </div>
         </div>
         
-        {/* Monaco Editor */}
-        <div className="flex-1 relative min-h-0">
-          <Editor
-            height="500px"
-            defaultLanguage={getLanguageFromFilename(selectedFile)}
-            language={getLanguageFromFilename(selectedFile)}
-            value={files[selectedFile] || ''}
-            theme="vs-dark"
-            onChange={handleEditorChange}
-            options={{
-              minimap: { enabled: false },
-              fontSize: 14,
-              wordWrap: 'on',
-              automaticLayout: true,
-              padding: { top: 10 },
-              scrollbar: {
-                verticalScrollbarSize: 10,
-                horizontalScrollbarSize: 10
-              }
-            }}
-          />
+        {/* File browser and editor container */}
+        <div className="flex flex-1 overflow-hidden">
+          {/* File and folder browser */}
+          <div className="w-64 border-r border-border flex flex-col overflow-hidden">
+            {/* Navigation breadcrumbs */}
+            {renderBreadcrumbs()}
+            
+            {/* Folder actions */}
+            <div className="flex items-center justify-between p-2 border-b border-border">
+              <div className="flex items-center space-x-2">
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={() => navigateToParentFolder()} 
+                  disabled={!currentPath}
+                  className="h-7 px-2"
+                >
+                  <ChevronUp size={16} />
+                </Button>
+                <span className="text-sm font-medium">{currentPath ? currentPath.split('/').pop() : 'Root'}</span>
+              </div>
+              <div className="flex space-x-1">
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={() => setShowFolderInput(true)}
+                  className="h-7 w-7 p-0" 
+                  title="New Folder"
+                >
+                  <Folder size={16} />
+                </Button>
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={() => setNewFileName("newfile.js")}
+                  className="h-7 w-7 p-0" 
+                  title="New File"
+                >
+                  <FileText size={16} />
+                </Button>
+              </div>
+            </div>
+            
+            {/* New folder input */}
+            {showFolderInput && (
+              <div className="p-2 border-b border-border">
+                <div className="flex">
+                  <Input
+                    type="text"
+                    value={newFolderName}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewFolderName(e.target.value)}
+                    onKeyPress={handleFolderKeyPress}
+                    placeholder="folder-name"
+                    className="h-7 text-sm rounded-r-none"
+                    autoFocus
+                  />
+                  <Button 
+                    onClick={addNewFolder}
+                    variant="outline"
+                    size="sm"
+                    className="rounded-l-none h-7"
+                  >
+                    Add
+                  </Button>
+                </div>
+              </div>
+            )}
+            
+            {/* New file input */}
+            {newFileName && (
+              <div className="p-2 border-b border-border">
+                <div className="flex">
+                  <Input
+                    type="text"
+                    value={newFileName}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewFileName(e.target.value)}
+                    onKeyPress={handleFileKeyPress}
+                    placeholder="file-name.js"
+                    className="h-7 text-sm rounded-r-none"
+                    autoFocus
+                  />
+                  <Button 
+                    onClick={addNewFile}
+                    variant="outline"
+                    size="sm"
+                    className="rounded-l-none h-7"
+                  >
+                    Add
+                  </Button>
+                </div>
+              </div>
+            )}
+            
+            {/* File list */}
+            <div className="overflow-y-auto flex-1">
+              {getCurrentPathFiles().map((item) => (
+                <div 
+                  key={item.path}
+                  className="flex items-center px-3 py-1.5 hover:bg-muted/50 cursor-pointer text-sm"
+                  onClick={() => {
+                    if (item.type === 'folder') {
+                      navigateToFolder(item.path);
+                    } else if (!item.path.includes('/.placeholder')) {
+                      setSelectedFile(item.path);
+                    }
+                  }}
+                >
+                  {item.type === 'folder' ? (
+                    <Folder size={14} className="mr-2 text-blue-500" />
+                  ) : item.path.includes('/.placeholder') ? null : (
+                    <FileText size={14} className="mr-2 text-gray-500" />
+                  )}
+                  <span>{item.name}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          
+          {/* Monaco Editor */}
+          <div className="flex-1 relative min-h-0">
+            <Editor
+              height="500px"
+              defaultLanguage={getLanguageFromFilename(selectedFile)}
+              language={getLanguageFromFilename(selectedFile)}
+              value={files[selectedFile] || ''}
+              theme="vs-dark"
+              onChange={handleEditorChange}
+              options={{
+                minimap: { enabled: false },
+                fontSize: 14,
+                wordWrap: 'on',
+                automaticLayout: true,
+                padding: { top: 10 },
+                scrollbar: {
+                  verticalScrollbarSize: 10,
+                  horizontalScrollbarSize: 10
+                }
+              }}
+            />
+          </div>
         </div>
           
         {/* Run controls */}
