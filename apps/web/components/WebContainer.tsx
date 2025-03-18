@@ -5,6 +5,8 @@ import { WebContainer } from '@webcontainer/api';
 import Editor from "@monaco-editor/react";
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Terminal } from 'xterm'
+import { FitAddon } from 'xterm-addon-fit'
 import { Input } from '@/components/ui/input';
 import { Play, Plus, XCircle, Folder, FileText, ChevronUp } from 'lucide-react';
 
@@ -99,9 +101,71 @@ module.exports = {
   const [isRunning, setIsRunning] = useState<boolean>(false);
   const [showFolderInput, setShowFolderInput] = useState<boolean>(false);
   const [fileStructure, setFileStructure] = useState<FileStructure[]>([]);
+  const [showTerminal, setShowTerminal] = useState(true)
+  const xtermRef = useRef<Terminal | null>(null)
+  const terminalRef = useRef(null)
+  const fitAddonRef = useRef<FitAddon | null>(null)
   
   const webcontainerRef = useRef<WebContainerInstance | null>(null);
   const serverProcessRef = useRef<ServerProcess | null>(null);
+
+  useEffect(() => {
+    if(webcontainerRef.current && terminalRef.current && showTerminal){
+      if(!xtermRef.current){
+        xtermRef.current = new Terminal({
+          cursorBlink: true,
+          fontSize: 14,
+          fontFamily: 'monospace',
+          theme: {
+            background: '#1e1e1e',
+            foreground: '#f0f0f0'
+          }
+        });
+
+        fitAddonRef.current = new FitAddon()
+        xtermRef.current.loadAddon(fitAddonRef.current)
+        xtermRef.current.open(terminalRef.current)
+        fitAddonRef.current.fit()
+
+        const setUpShell = async () => {
+          const shellProcess = await webcontainerRef.current.spawn('bash')
+          const input = shellProcess.input.getWriter()
+          const decoder = new TextDecoder();
+          shellProcess.output.pipeTo(
+            new WritableStream({
+              write(data){
+                xtermRef.current?.write(data)
+              }
+            })
+          )
+
+          xtermRef.current?.onData((data) => {
+            input.write(data)
+          })
+
+          setTimeout(() => {
+            if(xtermRef.current){
+              xtermRef.current.focus()
+            }
+          }, 100)
+          
+        }
+        setUpShell()
+      }
+
+      const handleResize = () => {
+        if(fitAddonRef.current){
+          fitAddonRef.current.fit()
+        }
+      }
+
+      window.addEventListener('resize', handleResize);
+      return () => {
+        window.removeEventListener('resize', handleResize);
+      };
+
+    }
+  }, [webcontainerRef.current, terminalRef.current, showTerminal])
   
   // Generate file structure from files object
   useEffect(() => {
@@ -142,7 +206,6 @@ module.exports = {
         }
       });
       
-      // Second pass: add all files
       Object.keys(files).forEach(path => {
         const parts = path.split('/');
         const fileName = parts.pop() || '';
@@ -304,11 +367,9 @@ module.exports = {
     }
   };
   
-  // Add new file
   const addNewFile = (): void => {
     if (!newFileName) return;
     
-    // Determine default content based on file extension
     let defaultContent = '';
     const extension = newFileName.split('.').pop()?.toLowerCase();
     
@@ -322,8 +383,25 @@ module.exports = {
       defaultContent = '<!DOCTYPE html>\n<html>\n<head>\n  <title>New HTML File</title>\n</head>\n<body>\n  <h1>Hello World</h1>\n</body>\n</html>';
     } else if (extension === 'css') {
       defaultContent = '/* CSS file */\nbody {\n  margin: 0;\n  padding: 0;\n}';
+    } else if (extension === 'jsx') {
+      defaultContent = `// JSX file
+    import React from "react";
+    
+    function NewComponent() {
+      return <div>Hello from JSX!</div>;
     }
     
+    export default NewComponent;`;
+    } else if (extension === 'tsx') {
+      defaultContent = `// TSX file
+    import React from "react";
+    
+    const NewComponent: React.FC = () => {
+      return <div>Hello from TSX!</div>;
+    };
+    
+    export default NewComponent;`;
+    }
     const newFilePath = currentPath ? `${currentPath}/${newFileName}` : newFileName;
     
     setFiles(prev => ({
@@ -456,14 +534,12 @@ module.exports = {
     return currentFolder?.children || [];
   };
   
-  // Render breadcrumb navigation
   const renderBreadcrumbs = () => {
     if (!currentPath) return null;
     
     const parts = currentPath.split('/');
     const breadcrumbs = [];
     
-    // Add root
     breadcrumbs.push(
       <span 
         key="root" 
@@ -474,7 +550,6 @@ module.exports = {
       </span>
     );
     
-    // Build path progressively
     let path = '';
     parts.forEach((part, index) => {
       path = path ? `${path}/${part}` : part;
@@ -503,14 +578,13 @@ module.exports = {
   
   return (
     <Card className="flex flex-col h-full border-0 rounded-none shadow-none">
-      {/* Header */}
       <CardHeader className="h-12 px-4 py-0 flex flex-row items-center justify-between bg-muted">
         <CardTitle className="text-base font-medium">WebContainer IDE</CardTitle>
       </CardHeader>
 
-      {/* Main content */}
+
       <CardContent className="p-0 flex flex-col flex-1 overflow-hidden">
-        {/* File tabs and controls */}
+
         <div className="flex items-center justify-between px-2 py-1 bg-background border-b border-border">
           <div className="flex items-center overflow-x-auto max-w-full">
 
@@ -536,7 +610,6 @@ module.exports = {
                     <XCircle size={14} />
                   </button>
                 )}
-                <button>nothing</button>
               </div>
             ))}
           </div>
@@ -606,7 +679,7 @@ module.exports = {
               </div>
             </div>
             
-            {/* New folder input */}
+          
             {showFolderInput && (
               <div className="p-2 border-b border-border">
                 <div className="flex">
