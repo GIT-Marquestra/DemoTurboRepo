@@ -130,7 +130,6 @@ module.exports = {
         const setUpShell = async () => {
           const shellProcess = await webcontainerRef.current.spawn('bash')
           const input = shellProcess.input.getWriter()
-          const decoder = new TextDecoder();
           shellProcess.output.pipeTo(
             new WritableStream({
               write(data){
