@@ -9,6 +9,8 @@ import { Terminal } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
 import { Input } from '@/components/ui/input';
 import { Play, Plus, XCircle, Folder, FileText, ChevronUp } from 'lucide-react';
+import { Terminal as TerminalIcon, Code, Layout, Eye } from 'lucide-react';
+import ProjectInitializer from './ProjectInitializer';
 
 // Define types for our state and props
 type FileContent = Record<string, string>;
@@ -20,6 +22,13 @@ type FileStructure = {
 };
 type WebContainerInstance = any; // Using any as a fallback since we don't have the exact type
 type ServerProcess = any; // Using any as a fallback for the server process
+
+interface CommandOutputChunk {
+  id: number;
+  content: string;
+  isCommand?: boolean;
+  isError?: boolean;
+}
 
 export default function WebContainerIDE(): JSX.Element {
   const [files, setFiles] = useState<FileContent>({
@@ -105,10 +114,196 @@ module.exports = {
   const xtermRef = useRef<Terminal | null>(null)
   const terminalRef = useRef(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
-  
+  const [previewUrl, setPreviewUrl] = useState('');
+  const [terminalInput, setTerminalInput] = useState('');
+  const [terminalHistory, setTerminalHistory] = useState([]);
+  const iframeRef = useRef<{
+    src: string
+  }>(null);
+  const refreshIframe = () => {
+    if (iframeRef.current && previewUrl) {
+      iframeRef.current.src = previewUrl;
+    }
+  };
   const webcontainerRef = useRef<WebContainerInstance | null>(null);
   const serverProcessRef = useRef<ServerProcess | null>(null);
+// Function to execute arbitrary commands
+const TerminalComp: React.FC = () => {
+  const [command, setCommand] = useState<string>('');
+  const [commandHistory, setCommandHistory] = useState<CommandOutputChunk[]>([]);
+  const [isRunning, setIsRunning] = useState<boolean>(false);
+  const [currentDir, setCurrentDir] = useState<string>('/');
+  const outputEndRef = useRef<HTMLDivElement | null>(null);
+  const historyIdCounter = useRef<number>(0);
 
+  const scrollToBottom = (): void => {
+    outputEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  const addToHistory = (content: string, isCommand: boolean = false, isError: boolean = false): void => {
+    const newChunk: CommandOutputChunk = {
+      id: historyIdCounter.current++,
+      content,
+      isCommand,
+      isError
+    };
+    
+    setCommandHistory(prev => [...prev, newChunk]);
+    setTimeout(scrollToBottom, 100);
+  };
+
+  const updateCurrentDirectory = async (): Promise<void> => {
+    if (!webcontainerRef.current) return;
+    
+    try {
+      const process = await webcontainerRef.current.spawn('pwd', []);
+      let output = '';
+      
+      process.output.pipeTo(
+        new WritableStream({
+          write(data: string) {
+            output += data.trim();
+          },
+          close() {
+            if (output) {
+              setCurrentDir(output);
+            }
+          }
+        })
+      );
+      
+      await process.exit;
+    } catch (error) {
+      console.error('Error getting current directory:', error);
+    }
+  };
+
+  const runCommand = async (cmdOverride?: string): Promise<void> => {
+    let commandToRun = cmdOverride || command.trim();
+    if (!webcontainerRef.current || !commandToRun) return;
+
+    const isInit = commandToRun.startsWith("bundler")
+
+    if(isInit){
+      commandToRun = commandToRun.replace("bundler", "");
+    }
+    
+    setCommand('');
+    setIsRunning(true);
+    addToHistory(commandToRun, true);
+    
+    try {
+
+      const parts = commandToRun.split(' ').filter(part => part.length > 0);
+      const cmd = parts[0];
+      const args = parts.slice(1);
+
+      if (cmd === 'cd') {
+        const cdProcess = await webcontainerRef.current.spawn(cmd, args);
+        await cdProcess.exit;
+        await updateCurrentDirectory();
+      } else {
+
+        const process = await webcontainerRef.current.spawn(cmd, args);
+
+        process.output.pipeTo(
+          new WritableStream({
+            write(data: string) {
+              addToHistory(data);
+            }
+          })
+        );
+
+        setTimeout(async () => {
+          if (isInit) {
+            const writer = process.input.getWriter();
+            await writer.write("y\n");
+            await writer.close();
+          }
+          
+        }, 300);
+        
+        
+        const exitCode = await process.exit;
+        if (exitCode !== 0) {
+          addToHistory(`Process exited with code ${exitCode}`, false, true);
+        }
+        
+        await updateCurrentDirectory();
+      }
+    } catch (error) {
+      console.error('Error running command:', error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      addToHistory(`Error: ${errorMessage}`, false, true);
+    } finally {
+      setIsRunning(false);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
+    if (e.key === 'Enter' && !isRunning) {
+      runCommand();
+    }
+  };
+
+  // Initialize directory on mount
+  useEffect(() => {
+    if (webcontainerRef.current) {
+      updateCurrentDirectory();
+    }
+  }, [webcontainerRef.current]);
+
+  return (
+    <div className="flex flex-col border rounded-md overflow-hidden">
+      <div className="bg-gray-900 text-gray-100 p-2 font-mono text-sm flex justify-between items-center">
+        <span>WebContainer Terminal</span>
+        <span className="text-xs text-gray-400">{currentDir}</span>
+      </div>
+      
+      <ProjectInitializer 
+        webcontainerRef={webcontainerRef.current} 
+        onCommandRun={(cmd) => runCommand(cmd)} 
+      />
+      
+      <div className="bg-black text-gray-200 p-4 font-mono text-sm h-64 overflow-y-auto">
+        {commandHistory.map((item) => (
+          <div 
+            key={item.id} 
+            className={`whitespace-pre-wrap ${item.isCommand ? 'text-green-400' : ''} ${item.isError ? 'text-red-400' : ''}`}
+          >
+            {item.isCommand ? `$ ${item.content}` : item.content}
+          </div>
+        ))}
+        <div ref={outputEndRef} />
+      </div>
+      
+      <div className="flex bg-gray-800 p-2">
+        <span className="text-green-400 font-mono mr-2">{currentDir} $</span>
+        <input
+          type="text"
+          value={command}
+          onChange={(e) => setCommand(e.target.value)}
+          onKeyDown={handleKeyDown}
+          disabled={isRunning}
+          placeholder={isRunning ? "Command running..." : "Enter command..."}
+          className="flex-1 bg-transparent text-gray-200 font-mono outline-none"
+          aria-label="Terminal command input"
+        />
+        <button
+          onClick={() => runCommand()}
+          disabled={isRunning || !command.trim()}
+          className={`px-3 py-1 ml-2 rounded text-sm ${
+            isRunning || !command.trim() 
+              ? 'bg-gray-600 text-gray-400 cursor-not-allowed' 
+              : 'bg-green-600 text-white hover:bg-green-700'
+          }`}
+        >
+          Run
+        </button>
+      </div>
+    </div>
+  );
+};
   useEffect(() => {
     if(webcontainerRef.current && terminalRef.current && showTerminal){
       if(!xtermRef.current){
@@ -232,6 +427,7 @@ module.exports = {
   useEffect(() => {
     const bootWebContainer = async (): Promise<void> => {
       try {
+        if(webcontainerRef.current) return 
         webcontainerRef.current = await WebContainer.boot();
         setOutput('WebContainer initialized ✅');
         await mountFiles();
@@ -277,23 +473,18 @@ module.exports = {
   const mountFiles = async () => {
     if (!webcontainerRef.current) return;
     
-    // Create a nested structure that matches the file system
     const fileTree: Record<string, any> = {};
     
-    console.log(files);
     
-    // Process all files and organize them into a nested structure
     Object.entries(files).forEach(([path, content]) => {
       const normalizedPath = path.startsWith('/') ? path.substring(1) : path;
       const parts = normalizedPath.split('/');
       
-      // Handle file at root level
       if (parts[0] && parts.length === 1) {
         fileTree[parts[0]] = { file: { contents: content } };
         return;
       }
       
-      // Handle nested files
       let current = fileTree;
       for (let i = 0; i < parts.length - 1; i++) {
         const part = parts[i];
@@ -305,20 +496,17 @@ module.exports = {
         }
       }
       
-      // Add the file to its correct directory
+      
       const fileName = parts[parts.length - 1];
       if(fileName){
         current[fileName] = { file: { contents: content } };
       }
     });
     
-    console.log(fileTree);
-    
-    // Mount files to WebContainer
     await webcontainerRef.current.mount(fileTree);
   };
   
-  // Run the code in WebContainer
+
   const runCode = async (): Promise<void> => {
     if (!webcontainerRef.current) return;
     
@@ -418,8 +606,6 @@ module.exports = {
     
     const newFolderPath = currentPath ? `${currentPath}/${newFolderName}` : newFolderName;
     
-    // Create an empty file inside the folder to ensure it exists
-    // This is a common practice since empty folders are not tracked in some systems
     const placeholderFile = `${newFolderPath}/.placeholder`;
     
     setFiles(prev => ({
@@ -430,16 +616,13 @@ module.exports = {
     setNewFolderName('');
     setShowFolderInput(false);
     
-    // Navigate to the new folder
     setCurrentPath(newFolderPath);
   };
   
-  // Navigate to a folder
   const navigateToFolder = (folderPath: string): void => {
     setCurrentPath(folderPath);
   };
   
-  // Navigate to parent folder
   const navigateToParentFolder = (): void => {
     if (!currentPath) return;
     
@@ -576,6 +759,7 @@ module.exports = {
   };
   
   return (
+   <>
     <Card className="flex flex-col h-full border-0 rounded-none shadow-none">
       <CardHeader className="h-12 px-4 py-0 flex flex-row items-center justify-between bg-muted">
         <CardTitle className="text-base font-medium">WebContainer IDE</CardTitle>
@@ -812,5 +996,41 @@ module.exports = {
         </div>
       </CardContent>
     </Card>
+    <TerminalComp/>
+
+{/* Add a Preview section with iframe */}
+<div className="h-64 min-h-0 bg-background border-t border-border">
+  <div className="flex items-center justify-between px-4 py-2 bg-muted/50 border-b border-border">
+    <span className="text-sm font-medium">Preview</span>
+    <div className="flex items-center">
+      <Input
+        type="text"
+        value="http://localhost:5173" // Default Vite port
+        readOnly
+        className="h-7 w-48 text-sm rounded-r-none"
+      />
+      <Button 
+        variant="outline"
+        size="sm"
+        className="rounded-l-none h-7"
+        onClick={() => refreshIframe()}
+      >
+        <Eye size={14} className="mr-1" />
+        View
+      </Button>
+    </div>
+  </div>
+  <div className="h-[calc(100%-36px)] w-full bg-white">
+    <iframe
+      ref={iframeRef}
+      src=""
+      className="w-full h-full border-none"
+      sandbox="allow-scripts allow-same-origin"
+      title="Preview"
+    />
+  </div>
+</div>
+
+   </>
   );
 }
