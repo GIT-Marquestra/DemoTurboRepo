@@ -1,19 +1,25 @@
 'use client'
 import React, { useState } from 'react';
 import { GripVertical, GripHorizontal, Mic, Video, PhoneOff } from 'lucide-react';
-import WebContainerIDE from '../../components/WebContainer';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Separator } from '@/components/ui/separator';
 
-interface LayoutProps {
-  initialSplitRatio?: number; // Between 0.2 and 0.8
-}
+// In your page file
 
-const CollaborativeLayout: React.FC<LayoutProps> = ({ initialSplitRatio = 0.5 }) => {
-  const [splitRatio, setSplitRatio] = useState(initialSplitRatio);
+import dynamic from 'next/dynamic';
+
+// Dynamically import with no SSR
+const WebContainerIDE = dynamic(
+  () => import('../../components/WebContainer'),
+  { ssr: false } // This is crucial - prevents SSR
+);
+
+
+const CollaborativeLayout = () => {
+  const [splitRatio, setSplitRatio] = useState(0.5);
   const [isDragging, setIsDragging] = useState(false);
   const [dragType, setDragType] = useState<'horizontal' | 'vertical' | null>(null);
   const [rightSplitRatio, setRightSplitRatio] = useState(0.6); // Video takes 60% of right panel by default

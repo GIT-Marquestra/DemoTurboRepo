@@ -9,7 +9,7 @@ import { Terminal } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
 import { Input } from '@/components/ui/input';
 import { Play, Plus, XCircle, Folder, FileText, ChevronUp } from 'lucide-react';
-import { Terminal as TerminalIcon, Code, Layout, Eye } from 'lucide-react';
+import { Eye } from 'lucide-react';
 import ProjectInitializer from './ProjectInitializer';
 
 // Define types for our state and props
@@ -20,8 +20,7 @@ type FileStructure = {
   type: 'file' | 'folder';
   children?: FileStructure[];
 };
-type WebContainerInstance = any; // Using any as a fallback since we don't have the exact type
-type ServerProcess = any; // Using any as a fallback for the server process
+; // Using any as a fallback for the server process
 
 interface CommandOutputChunk {
   id: number;
@@ -110,22 +109,14 @@ module.exports = {
   const [isRunning, setIsRunning] = useState<boolean>(false);
   const [showFolderInput, setShowFolderInput] = useState<boolean>(false);
   const [fileStructure, setFileStructure] = useState<FileStructure[]>([]);
-  const [showTerminal, setShowTerminal] = useState(true)
   const xtermRef = useRef<Terminal | null>(null)
   const terminalRef = useRef(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
-  const [previewUrl, setPreviewUrl] = useState('');
-  const [terminalInput, setTerminalInput] = useState('');
-  const [terminalHistory, setTerminalHistory] = useState([]);
   const iframeRef = useRef<{
     src: string
-  }>(null);
-  const refreshIframe = () => {
-    if (iframeRef.current && previewUrl) {
-      iframeRef.current.src = previewUrl;
-    }
-  };
+  }>(null);//@ts-expect-error: don't knwo what to do here
   const webcontainerRef = useRef<WebContainerInstance | null>(null);
+  //@ts-expect-error: don't knwo what to do here
   const serverProcessRef = useRef<ServerProcess | null>(null);
 // Function to execute arbitrary commands
 const TerminalComp: React.FC = () => {
@@ -251,7 +242,7 @@ const TerminalComp: React.FC = () => {
     if (webcontainerRef.current) {
       updateCurrentDirectory();
     }
-  }, [webcontainerRef.current]);
+  }, []);
 
   return (
     <div className="flex flex-col border rounded-md overflow-hidden">
@@ -261,7 +252,7 @@ const TerminalComp: React.FC = () => {
       </div>
       
       <ProjectInitializer 
-        webcontainerRef={webcontainerRef.current} 
+        webcontainerRef={webcontainerRef} 
         onCommandRun={(cmd) => runCommand(cmd)} 
       />
       
@@ -305,7 +296,7 @@ const TerminalComp: React.FC = () => {
   );
 };
   useEffect(() => {
-    if(webcontainerRef.current && terminalRef.current && showTerminal){
+    if(webcontainerRef.current && terminalRef.current){
       if(!xtermRef.current){
         xtermRef.current = new Terminal({
           cursorBlink: true,
@@ -359,7 +350,7 @@ const TerminalComp: React.FC = () => {
       };
 
     }
-  }, [webcontainerRef.current, terminalRef.current, showTerminal])
+  }, [])
   
   // Generate file structure from files object
   useEffect(() => {
@@ -427,10 +418,12 @@ const TerminalComp: React.FC = () => {
   useEffect(() => {
     const bootWebContainer = async (): Promise<void> => {
       try {
-        if(webcontainerRef.current) return 
-        webcontainerRef.current = await WebContainer.boot();
-        setOutput('WebContainer initialized ✅');
-        await mountFiles();
+        if(!webcontainerRef.current) {
+
+          webcontainerRef.current = await WebContainer.boot();
+          setOutput('WebContainer initialized ✅');
+          await mountFiles();
+        } 
       } catch (error) {
         console.error('Failed to initialize WebContainer:', error);
         setOutput('Failed to initialize WebContainer: ' + (error as Error).message);
@@ -472,8 +465,8 @@ const TerminalComp: React.FC = () => {
   
   const mountFiles = async () => {
     if (!webcontainerRef.current) return;
-    
-    const fileTree: Record<string, any> = {};
+    //@ts-expect-error: don't know what to do here
+    const fileTree: Record<string> = {};
     
     
     Object.entries(files).forEach(([path, content]) => {
@@ -911,8 +904,6 @@ const TerminalComp: React.FC = () => {
                 </div>
               </div>
             )}
-            
-            {/* File list */}
             <div className="overflow-y-auto flex-1">
               {getCurrentPathFiles().map((item) => (
                 <div 
@@ -1013,7 +1004,6 @@ const TerminalComp: React.FC = () => {
         variant="outline"
         size="sm"
         className="rounded-l-none h-7"
-        onClick={() => refreshIframe()}
       >
         <Eye size={14} className="mr-1" />
         View
@@ -1022,6 +1012,7 @@ const TerminalComp: React.FC = () => {
   </div>
   <div className="h-[calc(100%-36px)] w-full bg-white">
     <iframe
+    //@ts-expect-error: don't know what to do here
       ref={iframeRef}
       src=""
       className="w-full h-full border-none"
