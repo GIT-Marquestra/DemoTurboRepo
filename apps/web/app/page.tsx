@@ -1,12 +1,9 @@
-// In your page file
-'use client'; // Mark as client component
+'use client'; 
 
 import dynamic from 'next/dynamic';
-
-// Dynamically import with no SSR
 const WebContainerIDE = dynamic(
   () => import('../components/WebContainer'),
-  { ssr: false } // This is crucial - prevents SSR
+  { ssr: false } 
 );
 
 export default function YourPage() {
